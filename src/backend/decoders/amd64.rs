@@ -22,7 +22,7 @@ pub fn decode(bytes: &[u8], addr: u64) -> Option<Instruction> {
 
     // consume prefixes
     let mut p66 = false;
-    let mut pref_start = idx;
+    let pref_start = idx; /* dont need mut */
     while idx < bytes.len() {
         match bytes[idx] {
             0x66 => p66 = true,
@@ -31,8 +31,14 @@ pub fn decode(bytes: &[u8], addr: u64) -> Option<Instruction> {
         }
         idx += 1;
     }
-    if idx >= bytes.len() { return None; }
-    let rex = if idx > pref_start { Some(bytes[pref_start]) } else { None };
+    if idx >= bytes.len() {
+        return None;
+    }
+    let rex = if idx > pref_start {
+        Some(bytes[pref_start])
+    } else {
+        None
+    };
 
     // operand size
     let (op_size, reg_size) = match (p66, rex) {
@@ -45,7 +51,9 @@ pub fn decode(bytes: &[u8], addr: u64) -> Option<Instruction> {
     macro_rules! read_imm {
         ($sz:expr) => {{
             let need = idx + $sz;
-            if bytes.len() < need { return None; }
+            if bytes.len() < need {
+                return None;
+            }
             match $sz {
                 1 => bytes[idx] as u64,
                 2 => u16::from_le_bytes(bytes[idx..need].try_into().unwrap()) as u64,
@@ -65,10 +73,16 @@ pub fn decode(bytes: &[u8], addr: u64) -> Option<Instruction> {
         let r_id = (opc & 0x07) as usize;
 
         let (reg, imm_bytes) = match (is_wide, reg_size) {
-            (false, _) => (["al","cl","dl","bl","ah","ch","dh","bh"][r_id], 1),
-            (true, 16) => (["ax","cx","dx","bx","sp","bp","si","di"][r_id], 2),
-            (true, 32) => (["eax","ecx","edx","ebx","esp","ebp","esi","edi"][r_id], 4),
-            (true, 64) => (["rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi"][r_id], 8),
+            (false, _) => (["al", "cl", "dl", "bl", "ah", "ch", "dh", "bh"][r_id], 1),
+            (true, 16) => (["ax", "cx", "dx", "bx", "sp", "bp", "si", "di"][r_id], 2),
+            (true, 32) => (
+                ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"][r_id],
+                4,
+            ),
+            (true, 64) => (
+                ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"][r_id],
+                8,
+            ),
             _ => return None,
         };
 
@@ -83,18 +97,28 @@ pub fn decode(bytes: &[u8], addr: u64) -> Option<Instruction> {
 
     // 2) mov r/m, imm   (c6 /0 or c7 /0)
     if opc == 0xC6 || opc == 0xC7 {
-        if idx >= bytes.len() { return None; }
+        if idx >= bytes.len() {
+            return None;
+        }
         let modrm = bytes[idx];
         idx += 1;
-        if (modrm & 0xC0) != 0xC0 { return None; } // reg-direct only
+        if (modrm & 0xC0) != 0xC0 {
+            return None;
+        } // reg-direct only
         let r_id = (modrm & 0x07) as usize;
 
         let (reg, imm_bytes) = match opc {
-            0xC6 => (["al","cl","dl","bl","ah","ch","dh","bh"][r_id], 1),
+            0xC6 => (["al", "cl", "dl", "bl", "ah", "ch", "dh", "bh"][r_id], 1),
             0xC7 => match reg_size {
-                16 => (["ax","cx","dx","bx","sp","bp","si","di"][r_id], 2),
-                32 => (["eax","ecx","edx","ebx","esp","ebp","esi","edi"][r_id], 4),
-                64 => (["rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi"][r_id], 4),
+                16 => (["ax", "cx", "dx", "bx", "sp", "bp", "si", "di"][r_id], 2),
+                32 => (
+                    ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"][r_id],
+                    4,
+                ),
+                64 => (
+                    ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"][r_id],
+                    4,
+                ),
                 _ => return None,
             },
             _ => unreachable!(),
@@ -110,16 +134,23 @@ pub fn decode(bytes: &[u8], addr: u64) -> Option<Instruction> {
     }
 
     // 3) alu r/m, imm  (80-83, 81, f6-f7)
-    let (alu_opc, mnemonic) = match opc {
+    /*
+        we dont need the tuple assignment
+    */
+    match opc {
         0x80 | 0x82 => {
-            if idx >= bytes.len() { return None; }
+            if idx >= bytes.len() {
+                return None;
+            }
             let modrm = bytes[idx];
             idx += 1;
-            if (modrm & 0xC0) != 0xC0 { return None; }
+            if (modrm & 0xC0) != 0xC0 {
+                return None;
+            }
             let r_id = (modrm & 0x07) as usize;
-            let reg = ["al","cl","dl","bl","ah","ch","dh","bh"][r_id];
+            let reg = ["al", "cl", "dl", "bl", "ah", "ch", "dh", "bh"][r_id];
             let alu = (modrm >> 3) & 0x07;
-            let mn = ["add","or","adc","sbb","and","sub","xor","cmp"][alu as usize];
+            let mn = ["add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"][alu as usize];
             let imm = read_imm!(1);
             return Some(Instruction {
                 addr,
@@ -129,19 +160,23 @@ pub fn decode(bytes: &[u8], addr: u64) -> Option<Instruction> {
             });
         }
         0x81 => {
-            if idx >= bytes.len() { return None; }
+            if idx >= bytes.len() {
+                return None;
+            }
             let modrm = bytes[idx];
             idx += 1;
-            if (modrm & 0xC0) != 0xC0 { return None; }
+            if (modrm & 0xC0) != 0xC0 {
+                return None;
+            }
             let r_id = (modrm & 0x07) as usize;
             let reg = match reg_size {
-                16 => ["ax","cx","dx","bx","sp","bp","si","di"][r_id],
-                32 => ["eax","ecx","edx","ebx","esp","ebp","esi","edi"][r_id],
-                64 => ["rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi"][r_id],
+                16 => ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di"][r_id],
+                32 => ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"][r_id],
+                64 => ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"][r_id],
                 _ => return None,
             };
             let alu = (modrm >> 3) & 0x07;
-            let mn = ["add","or","adc","sbb","and","sub","xor","cmp"][alu as usize];
+            let mn = ["add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"][alu as usize];
             let imm = read_imm!(op_size.min(4));
             return Some(Instruction {
                 addr,
@@ -151,19 +186,23 @@ pub fn decode(bytes: &[u8], addr: u64) -> Option<Instruction> {
             });
         }
         0x83 => {
-            if idx >= bytes.len() { return None; }
+            if idx >= bytes.len() {
+                return None;
+            }
             let modrm = bytes[idx];
             idx += 1;
-            if (modrm & 0xC0) != 0xC0 { return None; }
+            if (modrm & 0xC0) != 0xC0 {
+                return None;
+            }
             let r_id = (modrm & 0x07) as usize;
             let reg = match reg_size {
-                16 => ["ax","cx","dx","bx","sp","bp","si","di"][r_id],
-                32 => ["eax","ecx","edx","ebx","esp","ebp","esi","edi"][r_id],
-                64 => ["rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi"][r_id],
+                16 => ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di"][r_id],
+                32 => ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"][r_id],
+                64 => ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"][r_id],
                 _ => return None,
             };
             let alu = (modrm >> 3) & 0x07;
-            let mn = ["add","or","adc","sbb","and","sub","xor","cmp"][alu as usize];
+            let mn = ["add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"][alu as usize];
             let imm = read_imm!(1);
             return Some(Instruction {
                 addr,
@@ -173,14 +212,14 @@ pub fn decode(bytes: &[u8], addr: u64) -> Option<Instruction> {
             });
         }
         _ => {}
-    };
+    }
 
     // 4) push reg
     if (0x50..=0x57).contains(&opc) {
         let r_id = (opc - 0x50) as usize;
         let reg = match reg_size {
-            32 => ["eax","ecx","edx","ebx","esp","ebp","esi","edi"][r_id],
-            64 => ["rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi"][r_id],
+            32 => ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"][r_id],
+            64 => ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"][r_id],
             _ => return None,
         };
         return Some(Instruction {
@@ -195,8 +234,8 @@ pub fn decode(bytes: &[u8], addr: u64) -> Option<Instruction> {
     if (0x58..=0x5F).contains(&opc) {
         let r_id = (opc - 0x58) as usize;
         let reg = match reg_size {
-            32 => ["eax","ecx","edx","ebx","esp","ebp","esi","edi"][r_id],
-            64 => ["rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi"][r_id],
+            32 => ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"][r_id],
+            64 => ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"][r_id],
             _ => return None,
         };
         return Some(Instruction {
