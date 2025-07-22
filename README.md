@@ -1,5 +1,5 @@
 # bark
-A mini diassembler & decompiler for amd64.
+A mini disassembler & decompiler for amd64.
 
 # usage
 Edit `input.s` with a set of bytes (machine code).
