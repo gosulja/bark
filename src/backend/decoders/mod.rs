@@ -1,6 +1,6 @@
 pub mod amd64;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Instruction {
     pub addr: u64,             /* Address of the instruction */
     pub bytes: Vec<u8>,        /* Bytes of the instruction */

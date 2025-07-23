@@ -1,6 +1,8 @@
 # bark
 A mini disassembler & decompiler for amd64.
 
+Refer to https://github.com/longbridge/gpui-component for use on components.
+
 # usage
 Edit `input.s` with a set of bytes (machine code).
 For example, `mov rax, 0x2` is already set as an example:

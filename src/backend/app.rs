@@ -1,20 +1,50 @@
 use super::decoders;
 use super::decoders::*;
+use super::decompiler;
 use super::misc;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::v_flex;
 use std::collections::HashMap;
 
-pub struct BarkApp {
-    input: String,                   /* Assembly input */
-    output: Vec<Instruction>,        /* Output as instructions */
-    decompiled: String,              /* Decompiled pseudo-c code */
-    variables: HashMap<String, Var>, /* Variable map */
-    next_var_id: usize,              /* Next placeholder id for the variable */
+#[derive(Clone, Debug)]
+pub enum ViewMode {
+    Linear,
+    Hex,
 }
 
-/* Helper for getting platform decoder, just for now return x86_64 / amd64 decoder */
-fn get_platform_decoder(bytes: &[u8], addr: u64) -> Option<Instruction> {
-    decoders::amd64::decode(bytes, addr)
+#[derive(Clone, Debug)]
+pub struct Function {
+    pub name: String,
+    pub address: u64,
+    pub size: usize,
+    pub instructions: Vec<Instruction>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Symbol {
+    pub name: String,
+    pub address: u64,
+    pub symbol_type: String,
+}
+
+pub struct BarkApp {
+    pub input: String,
+    pub output: Vec<Instruction>,
+    pub decompiled: String,
+    pub variables: HashMap<String, Var>,
+    pub next_var_id: usize,
+    current_view: ViewMode,
+    functions: Vec<Function>,
+    symbols: Vec<Symbol>,
+    selected_function: Option<usize>,
+    selected_address: Option<u64>,
+    sidebar_visible: bool,
+    hex_data: Vec<u8>,
+    search_query: String,
+    active_tab: usize,
+    console_output: Vec<String>,
 }
 
 impl BarkApp {
@@ -25,145 +55,105 @@ impl BarkApp {
             decompiled: String::new(),
             variables: HashMap::new(),
             next_var_id: 0,
+            current_view: ViewMode::Linear,
+            functions: Vec::new(),
+            symbols: Vec::new(),
+            selected_function: None,
+            selected_address: None,
+            sidebar_visible: true,
+            hex_data: Vec::new(),
+            search_query: String::new(),
+            active_tab: 0,
+            console_output: vec!["bark disassembler init".to_string()],
         };
 
-        /* Simple just explicitly load an "input.s" file (for debugging purposes.) */
         instance.load_file();
+        instance.analyze_functions();
         instance
     }
 
     fn parse_bytes(&self, input: &str) -> Result<Vec<u8>, String> {
-        /* Clean the input string so it can be effectively parsed */
         let cleaned = input.replace(" ", "").replace("0x", "");
-        /*
-            Validate the byte string to ensure it's a properly cleaned.
-            We can achieve this by checking if it's an even length.
-            because each byte is represented with two hex chars.
-            2^n is always even.
-        */
         if cleaned.len() % 2 != 0 {
             return Err("invalid byte input str length".to_string());
         }
 
-        /*
-            Create a new vector for the bytes to be pushed to.
-        */
         let mut bytes = vec![];
-        /* Iterare with two steps (bcus each byte is represented by 2) */
         for i in (0..cleaned.len()).step_by(2) {
-            /* Substring two characters (the byte we want) */
             let bstr = &cleaned[i..i + 2];
-            /* Convert to u8, if fails error. */
             match u8::from_str_radix(bstr, 16) {
-                Ok(b) => bytes.push(b), /* Push to bytes vec */
+                Ok(b) => bytes.push(b),
                 Err(_) => return Err(format!("invalid hex byte: {}", bstr)),
             }
         }
-
-        /* Return bytes */
         Ok(bytes)
     }
 
     fn load_file(&mut self) {
-        /* Explicitly read from the "input.s" file in the root directory. */
         match std::fs::read_to_string("input.s") {
             Ok(content) => {
                 self.input = content.trim().to_string();
-                /* Process each character to the input bff */
                 self.process_input();
+                self.console_output
+                    .push("loaded input.s successfully".to_string());
             }
             Err(_) => {
-                eprintln!(
-                    "[debug] if you see this error, it's because input.s does not exist in the root directory of the project."
-                );
+                self.console_output
+                    .push("err: input.s not found in root directory".to_string());
             }
         }
     }
 
-    /*
-        Decode instructions.
-
-        For now, implementation for mov immediate to reg is implemented.
-    */
     fn decode(&self, bytes: &[u8], addr: u64) -> Option<Instruction> {
         if bytes.is_empty() {
             return None;
         }
-
         get_platform_decoder(bytes, addr)
     }
 
-    /* Simply generate a variable name */
-    fn gen_var_name(&mut self) -> String {
+    pub fn gen_var_name(&mut self) -> String {
         let name = format!("v{}", self.next_var_id);
         self.next_var_id += 1;
         name
     }
 
-    fn decompile(&mut self) {
-        /* Reset state */
-        self.variables.clear();
-        self.next_var_id = 0;
-
-        let mut code = String::new();
+    fn analyze_functions(&mut self) {
         /*
-            Boilerplate header set up and a fake entry point (temporary, just for the aesthetic of the decompilation output)
+            This function is where we'll obviously analyze functions,
+            for now, to make it clear just define an entry point func,
+            and a few tests (debug)
         */
-        code.push_str("/* code generated by bark decompiler v0.1.0 */\n");
-        code.push_str("#include <stdint.h>\n\n");
-        code.push_str("void fn() {\n");
 
-        for inst in self.output.clone() {
-            /*
-                Here, i only added decompilation support for
-                the "mov" instruction.
+        let current_func = Function {
+            name: "main".to_string(),
+            address: 0x400000,
+            size: self.output.len(),
+            instructions: self.output.clone(),
+        };
 
-                Check for the "mov" mnemonic, and if the operands len is 2, decompile it.
-            */
-            if inst.mnemonic == "mov" && inst.operands.len() == 2 {
-                let reg = &inst.operands[0];
-                let val = &inst.operands[1];
+        self.functions.push(current_func);
 
-                /* Parse the immediate value */
-                if let Ok(val) = if val.starts_with("0x") {
-                    /* hexadecimal immediate */
-                    i32::from_str_radix(&val[2..], 16)
-                } else {
-                    val.parse::<i32>() /* denary immediate */
-                } {
-                    /* Variable already exists? */
-                    if let Some(var) = self.variables.get_mut(reg) {
-                        var.value = val;
-                        /* Push an assignment statement */
-                        code.push_str(&format!("    {} = {};  /* {} */  \n", var.name, val, reg));
-                    } else {
-                        let vname = self.gen_var_name(); /* Generate a variable name */
-                        let var = Var {
-                            name: vname.clone(),
-                            value: val,
-                            register: reg.clone(),
-                        }; /* Create the variable */
+        self.functions.push(Function {
+            name: "sub_test".to_string(),
+            address: 0x410000,
+            size: self.output.len(),
+            instructions: vec![],
+        });
 
-                        self.variables.insert(reg.clone(), var); /* Insert the variable at the register */
-                        code.push_str(&format!(
-                            "    int32_t {} = {};    /* {} */\n",
-                            vname, val, reg
-                        )); /* Push the variable decl to the code */
-                    }
-                }
-            }
-        }
-
-        code.push_str("}\n");
-        self.decompiled = code;
+        self.symbols.push(Symbol {
+            name: "main".to_string(),
+            address: 0x400000,
+            symbol_type: "fn".to_string(),
+        });
     }
 
     fn process_input(&mut self) {
         self.output.clear();
 
         if let Ok(bytes) = self.parse_bytes(&self.input) {
-            let base_addr = 0x400000u64; /* Assume we start at 0x40000000 */
-            let mut offset = 0; /* Offset (dependent on current instruction length in bytes) */
+            self.hex_data = bytes.clone();
+            let base_addr = 0x400000u64;
+            let mut offset = 0;
 
             while offset < bytes.len() {
                 if let Some(inst) = self.decode(&bytes[offset..], base_addr + offset as u64) {
@@ -175,12 +165,238 @@ impl BarkApp {
             }
         }
 
-        self.decompile();
+        decompiler::decompile(self);
+    }
+
+    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .w_64()
+            .bg(rgb(0x1a1a1a))
+            .border_r_1()
+            .border_color(rgb(0x383838))
+            .child(
+                div().p_3().border_b_1().border_color(rgb(0x383838)).child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::NORMAL)
+                        .text_color(rgb(0xffffff))
+                        .child("functions"),
+                ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .p_2()
+                    .children(self.functions.iter().enumerate().map(|(i, func)| {
+                        div()
+                            .p_2()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .when(self.selected_function == Some(i), |div| {
+                                div.bg(rgb(0x2d2d30))
+                            })
+                            .hover(|div| div.bg(rgb(0x252526)))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(0xdcdcdc))
+                                    .child(func.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0x808080))
+                                    .child(format!("0x{:08x}", func.address)),
+                            )
+                    })),
+            )
+    }
+
+    fn render_main_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(match self.current_view {
+            ViewMode::Linear => self.render_linear_view(cx).into_any_element(),
+            ViewMode::Hex => self.render_hex_view(cx).into_any_element(),
+        })
+    }
+
+    fn render_linear_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .size_full()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_1_2()
+                    .bg(rgb(0x1e1e1e))
+                    .border_r_1()
+                    .border_color(rgb(0x383838))
+                    .child(
+                        div().p_3().border_b_1().border_color(rgb(0x383838)).child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::NORMAL)
+                                .text_color(rgb(0xffffff))
+                                .child("disassembly"),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .p_3()
+                            .font_family("CaskaydiaCove Nerd Font")
+                            .text_sm()
+                            .child(v_flex().children(self.output.iter().map(|instr| {
+                                let line = format!(
+                                    "0x{:08x}: {} {}",
+                                    instr.addr,
+                                    instr.mnemonic,
+                                    instr.operands.join(", ")
+                                );
+
+                                misc::do_highlight(&line, "asm")
+                            }))),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_1_2()
+                    .bg(rgb(0x1e1e1e))
+                    .child(
+                        div().p_3().border_b_1().border_color(rgb(0x383838)).child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::NORMAL)
+                                .text_color(rgb(0xffffff))
+                                .child("decompiler"),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .p_3()
+                            .font_family("CaskaydiaCove Nerd Font")
+                            .text_sm()
+                            .children(self.decompiled.lines().map(|line| {
+                                div()
+                                    .p_1()
+                                    .text_color(rgb(0xdcdcdc))
+                                    .child(misc::do_highlight(line, "c"))
+                            })),
+                    ),
+            )
+    }
+
+    fn render_hex_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(rgb(0x1e1e1e))
+            .child(
+                div().p_3().border_b_1().border_color(rgb(0x383838)).child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(0xffffff))
+                        .child("hex view"),
+                ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .p_3()
+                    .font_family("CaskaydiaCove Nerd Font")
+                    .text_sm()
+                    .children(self.hex_data.chunks(16).enumerate().map(|(i, chunk)| {
+                        div()
+                            .flex()
+                            .p_1()
+                            .child(
+                                div()
+                                    .w_24()
+                                    .text_color(rgb(0x569cd6))
+                                    .child(format!("{:08x}:", i * 16)),
+                            )
+                            .child(
+                                div().ml_4().text_color(rgb(0xdcdcdc)).child(
+                                    chunk
+                                        .iter()
+                                        .map(|b| format!("{:02x}", b))
+                                        .collect::<Vec<_>>()
+                                        .join(" "),
+                                ),
+                            )
+                    })),
+            )
+    }
+
+    fn render_toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .p_3()
+            .bg(rgb(0x252526))
+            .border_b_1()
+            .border_color(rgb(0x383838))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Button::new("reload-btn")
+                            .primary()
+                            .label("reload")
+                            .on_click(cx.listener(|this: &mut BarkApp, _, _, _| {
+                                this.load_file();
+                            })),
+                    )
+                    .child(
+                        Button::new("linear-view")
+                            .when(matches!(self.current_view, ViewMode::Linear), |btn| {
+                                btn.primary()
+                            })
+                            .label("linear")
+                            .on_click(cx.listener(|this: &mut BarkApp, _, _, _| {
+                                this.current_view = ViewMode::Linear;
+                            })),
+                    )
+                    .child(
+                        Button::new("hex-view")
+                            .when(matches!(self.current_view, ViewMode::Hex), |btn| {
+                                btn.primary()
+                            })
+                            .label("hex")
+                            .on_click(cx.listener(|this: &mut BarkApp, _, _, _| {
+                                this.current_view = ViewMode::Hex;
+                            })),
+                    ),
+            )
+            .child(
+                div().flex().items_center().gap_2().child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(0xffffff))
+                        .child("bark disassembler"),
+                ),
+            )
     }
 }
 
+/* Helper for getting platform decoder */
+fn get_platform_decoder(bytes: &[u8], addr: u64) -> Option<Instruction> {
+    decoders::amd64::decode(bytes, addr)
+}
+
 impl Render for BarkApp {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -188,82 +404,23 @@ impl Render for BarkApp {
             .bg(rgb(0x1e1e1e))
             .text_color(rgb(0xffffff))
             .font_family("CaskaydiaCove Nerd Font")
+            .child(self.render_toolbar(cx))
             .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::BOLD)
-                    .p_3()
-                    .border_b_1()
-                    .border_color(rgb(0x383838))
-                    .child("bark disassembler"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .size_full()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .w_1_2()
-                            .border_color(rgb(0x383838))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .p_2()
-                                    .child("Disassembly"),
-                            )
-                            .child(
-                                div()
-                                    .flex_grow()
-                                    .bg(rgb(0x282828))
-                                    .border_1()
-                                    .border_color(rgb(0x404040))
-                                    .p_3()
-                                    .text_sm()
-                                    .children(self.output.iter().flat_map(|instr| {
-                                        let line = format!(
-                                            "0x{:08x}: {} {}",
-                                            instr.addr,
-                                            instr.mnemonic,
-                                            instr.operands.join(", ")
-                                        );
-
-                                        vec![misc::do_highlight(&line, "asm")]
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .w_1_2()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .p_2()
-                                    .child("Decompiler"),
-                            )
-                            .child(
-                                div()
-                                    .flex_grow()
-                                    .bg(rgb(0x282828))
-                                    .border_r_1()
-                                    .border_b_1()
-                                    .border_t_1()
-                                    .border_color(rgb(0x404040))
-                                    .font_family("CaskaydiaCove Nerd Font")
-                                    .p_3()
-                                    .text_sm()
-                                    .children(
-                                        self.decompiled
-                                            .lines()
-                                            .map(|line| misc::do_highlight(line, "c")),
-                                    ),
-                            ),
-                    ),
+                div().flex().flex_1().child(
+                    div()
+                        .flex()
+                        .size_full()
+                        .when(self.sidebar_visible, |div| {
+                            div.child(self.render_sidebar(cx))
+                        })
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .child(div().flex_1().child(self.render_main_view(cx))),
+                        ),
+                ),
             )
     }
 }
