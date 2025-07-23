@@ -1,6 +1,9 @@
 # bark
 A mini disassembler & decompiler for amd64.
 
+<img width="875" height="264" alt="image" src="https://github.com/user-attachments/assets/b27bf352-cb03-45e0-9a85-74961b41c411" />
+
+
 Refer to https://github.com/longbridge/gpui-component for use on components.
 
 # usage
