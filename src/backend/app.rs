@@ -15,6 +15,12 @@ pub enum ViewMode {
 }
 
 #[derive(Clone, Debug)]
+pub enum AppState {
+    AddressInput,
+    Main,
+}
+
+#[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
     pub address: u64,
@@ -45,11 +51,14 @@ pub struct BarkApp {
     search_query: String,
     active_tab: usize,
     console_output: Vec<String>,
+    base_address_input: String,
+    base_address: u64,
+    app_state: AppState,
 }
 
 impl BarkApp {
     pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
-        let mut instance = Self {
+        Self {
             input: String::new(),
             output: Vec::new(),
             decompiled: String::new(),
@@ -65,11 +74,10 @@ impl BarkApp {
             search_query: String::new(),
             active_tab: 0,
             console_output: vec!["bark disassembler init".to_string()],
-        };
-
-        instance.load_file();
-        instance.analyze_functions();
-        instance
+            base_address_input: String::new(),
+            base_address: 0,
+            app_state: AppState::AddressInput,
+        }
     }
 
     fn parse_bytes(&self, input: &str) -> Result<Vec<u8>, String> {
@@ -87,6 +95,16 @@ impl BarkApp {
             }
         }
         Ok(bytes)
+    }
+
+    fn parse_address(&self, input: &str) -> Result<u64, String> {
+        let cleaned = input.trim().replace("0x", "");
+        u64::from_str_radix(&cleaned, 16).map_err(|_| "invalid address format".to_string())
+    }
+
+    fn init_app(&mut self) {
+        self.load_file();
+        self.analyze_functions();
     }
 
     fn load_file(&mut self) {
@@ -118,15 +136,12 @@ impl BarkApp {
     }
 
     fn analyze_functions(&mut self) {
-        /*
-            This function is where we'll obviously analyze functions,
-            for now, to make it clear just define an entry point func,
-            and a few tests (debug)
-        */
+        self.functions.clear();
+        self.symbols.clear();
 
         let current_func = Function {
             name: "main".to_string(),
-            address: 0x400000,
+            address: self.base_address,
             size: self.output.len(),
             instructions: self.output.clone(),
         };
@@ -135,14 +150,14 @@ impl BarkApp {
 
         self.functions.push(Function {
             name: "sub_test".to_string(),
-            address: 0x410000,
+            address: self.base_address + 0x10000,
             size: self.output.len(),
             instructions: vec![],
         });
 
         self.symbols.push(Symbol {
             name: "main".to_string(),
-            address: 0x400000,
+            address: self.base_address,
             symbol_type: "fn".to_string(),
         });
     }
@@ -152,11 +167,10 @@ impl BarkApp {
 
         if let Ok(bytes) = self.parse_bytes(&self.input) {
             self.hex_data = bytes.clone();
-            let base_addr = 0x400000u64;
             let mut offset = 0;
 
             while offset < bytes.len() {
-                if let Some(inst) = self.decode(&bytes[offset..], base_addr + offset as u64) {
+                if let Some(inst) = self.decode(&bytes[offset..], self.base_address + offset as u64) {
                     offset += inst.bytes.len();
                     self.output.push(inst);
                 } else {
@@ -166,6 +180,66 @@ impl BarkApp {
         }
 
         decompiler::decompile(self);
+    }
+
+    fn render_address_input(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .bg(rgb(0x1e1e1e))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_4()
+                    .p_8()
+                    .bg(rgb(0x252526))
+                    .border_1()
+                    .border_color(rgb(0x383838))
+                    .rounded_lg()
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0xffffff))
+                            .child("enter base address"),
+                    )
+                    .child(
+                        TextInput::new()
+                            .value(&self.base_address_input)
+                            .on_input(cx.listener(|this: &mut BarkApp, input: String, _, _| {
+                                this.base_address_input = input;
+                            }))
+                            .on_key_down(cx.listener(|this: &mut BarkApp, event: &KeyDownEvent, _, _| {
+                                if event.keystroke.key == "enter" {
+                                    if let Ok(addr) = this.parse_address(&this.base_address_input) {
+                                        this.base_address = addr;
+                                        this.app_state = AppState::Main;
+                                        this.init_app();
+                                    }
+                                }
+                            }))
+                            .placeholder("0x400000")
+                            .text_center()
+                            .w_64()
+                            .text_lg(),
+                    )
+                    .child(
+                        Button::new("confirm-btn")
+                            .primary()
+                            .label("confirm")
+                            .on_click(cx.listener(|this: &mut BarkApp, _, _, _| {
+                                if let Ok(addr) = this.parse_address(&this.base_address_input) {
+                                    this.base_address = addr;
+                                    this.app_state = AppState::Main;
+                                    this.init_app();
+                                }
+                            })),
+                    ),
+            )
     }
 
     fn render_sidebar(
@@ -301,9 +375,6 @@ impl BarkApp {
                             })),
                     ),
             )
-        // .child(
-
-        // )
     }
 
     fn render_hex_view(
@@ -339,7 +410,7 @@ impl BarkApp {
                                 div()
                                     .w_24()
                                     .text_color(rgb(0x569cd6))
-                                    .child(format!("{:08x}:", i * 16)),
+                                    .child(format!("{:08x}:", (self.base_address as usize) + (i * 16))),
                             )
                             .child(
                                 div().ml_4().text_color(rgb(0xdcdcdc)).child(
@@ -409,50 +480,40 @@ impl BarkApp {
     }
 }
 
-/* Helper for getting platform decoder */
 fn get_platform_decoder(bytes: &[u8], addr: u64) -> Option<Instruction> {
-    // decoders::amd64::decode(bytes, addr)
     decoders::arm32::decode(bytes, addr as u32)
 }
 
 impl Render for BarkApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // let input_state = cx.new(|cx| {
-        //     InputState::new(window, cx)
-        //         .code_editor("c")
-        //         .line_number(true)
-        //         .placeholder("/* bark editor */")
-        // });
-
-        // input_state.update(cx, |s, cx| {
-        //     s.focus(window, cx);
-        // });
-
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .bg(rgb(0x1e1e1e))
-            .text_color(rgb(0xffffff))
-            .font_family("CaskaydiaCove Nerd Font")
-            .child(self.render_toolbar(cx))
-            .child(
-                div().flex().flex_1().child(
-                    div()
-                        .flex()
-                        .size_full()
-                        .when(self.sidebar_visible, |div| {
-                            div.child(self.render_sidebar(window, cx))
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .child(div().flex_1().child(self.render_main_view(window, cx))),
-                        ),
-                ),
-            )
-        // .child(div().h_128().child(TextInput::new(&input_state)))
+        match self.app_state {
+            AppState::AddressInput => self.render_address_input(cx).into_any_element(),
+            AppState::Main => div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .bg(rgb(0x1e1e1e))
+                .text_color(rgb(0xffffff))
+                .font_family("CaskaydiaCove Nerd Font")
+                .child(self.render_toolbar(cx))
+                .child(
+                    div().flex().flex_1().child(
+                        div()
+                            .flex()
+                            .size_full()
+                            .when(self.sidebar_visible, |div| {
+                                div.child(self.render_sidebar(window, cx))
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .child(div().flex_1().child(self.render_main_view(window, cx))),
+                            ),
+                    ),
+                )
+                .into_any_element(),
+        }
     }
 }
