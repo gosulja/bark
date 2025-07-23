@@ -1,4 +1,5 @@
 pub mod amd64;
+pub mod arm32;
 
 #[derive(Clone, Debug)]
 pub struct Instruction {

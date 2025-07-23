@@ -168,7 +168,11 @@ impl BarkApp {
         decompiler::decompile(self);
     }
 
-    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -214,14 +218,22 @@ impl BarkApp {
             )
     }
 
-    fn render_main_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_main_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div().size_full().child(match self.current_view {
-            ViewMode::Linear => self.render_linear_view(cx).into_any_element(),
-            ViewMode::Hex => self.render_hex_view(cx).into_any_element(),
+            ViewMode::Linear => self.render_linear_view(window, cx).into_any_element(),
+            ViewMode::Hex => self.render_hex_view(window, cx).into_any_element(),
         })
     }
 
-    fn render_linear_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_linear_view(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
             .flex()
             .size_full()
@@ -289,9 +301,16 @@ impl BarkApp {
                             })),
                     ),
             )
+        // .child(
+
+        // )
     }
 
-    fn render_hex_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_hex_view(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -353,7 +372,7 @@ impl BarkApp {
                         Button::new("reload-btn")
                             .primary()
                             .label("reload")
-                            .on_click(cx.listener(|this: &mut BarkApp, _, _, _| {
+                            .on_click(cx.listener(move |this: &mut BarkApp, _, _, _| {
                                 this.load_file();
                             })),
                     )
@@ -392,11 +411,23 @@ impl BarkApp {
 
 /* Helper for getting platform decoder */
 fn get_platform_decoder(bytes: &[u8], addr: u64) -> Option<Instruction> {
-    decoders::amd64::decode(bytes, addr)
+    // decoders::amd64::decode(bytes, addr)
+    decoders::arm32::decode(bytes, addr as u32)
 }
 
 impl Render for BarkApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // let input_state = cx.new(|cx| {
+        //     InputState::new(window, cx)
+        //         .code_editor("c")
+        //         .line_number(true)
+        //         .placeholder("/* bark editor */")
+        // });
+
+        // input_state.update(cx, |s, cx| {
+        //     s.focus(window, cx);
+        // });
+
         div()
             .flex()
             .flex_col()
@@ -411,16 +442,17 @@ impl Render for BarkApp {
                         .flex()
                         .size_full()
                         .when(self.sidebar_visible, |div| {
-                            div.child(self.render_sidebar(cx))
+                            div.child(self.render_sidebar(window, cx))
                         })
                         .child(
                             div()
                                 .flex()
                                 .flex_col()
                                 .flex_1()
-                                .child(div().flex_1().child(self.render_main_view(cx))),
+                                .child(div().flex_1().child(self.render_main_view(window, cx))),
                         ),
                 ),
             )
+        // .child(div().h_128().child(TextInput::new(&input_state)))
     }
 }

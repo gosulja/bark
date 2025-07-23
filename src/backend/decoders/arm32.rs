@@ -1,8 +1,13 @@
 use super::Instruction;
 use std::collections::HashMap;
 
-const REGS: &[&str] = &["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "sp", "lr", "pc"];
-const CONDITIONS: &[&str] = &["eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "", "nv"];
+const REGS: &[&str] = &[
+    "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "sp", "lr",
+    "pc",
+];
+const CONDITIONS: &[&str] = &[
+    "eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "", "nv",
+];
 
 #[derive(Default)]
 pub struct VariableRecovery {
@@ -88,7 +93,10 @@ impl VariableRecovery {
 
     fn process_memory_operand(&mut self, operand: &str) -> String {
         if operand.contains("sp") {
-            if let Some(inner) = operand.strip_prefix("[sp").and_then(|s| s.strip_suffix("]")) {
+            if let Some(inner) = operand
+                .strip_prefix("[sp")
+                .and_then(|s| s.strip_suffix("]"))
+            {
                 if inner.is_empty() {
                     return self.get_stack_var(0);
                 }
@@ -117,7 +125,7 @@ impl<'a> Cursor<'a> {
         if self.pos + 4 > self.bytes.len() {
             None
         } else {
-            let val = u32::from_le_bytes(self.bytes[self.pos..self.pos+4].try_into().ok()?);
+            let val = u32::from_le_bytes(self.bytes[self.pos..self.pos + 4].try_into().ok()?);
             self.pos += 4;
             Some(val)
         }
@@ -140,10 +148,10 @@ pub fn decode(bytes: &[u8], addr: u32) -> Option<Instruction> {
 
     let mut cursor = Cursor::new(bytes);
     let instr = cursor.read_u32()?;
-    
+
     let cond = (instr >> 28) & 0xf;
     let op_type = (instr >> 25) & 0x7;
-    
+
     match op_type {
         0b000 => decode_data_processing(&mut cursor, instr, addr),
         0b001 => decode_immediate(&mut cursor, instr, addr),
@@ -160,10 +168,10 @@ fn decode_data_processing(cursor: &mut Cursor, instr: u32, addr: u32) -> Option<
     let rn = (instr >> 16) & 0xf;
     let rd = (instr >> 12) & 0xf;
     let cond = (instr >> 28) & 0xf;
-    
+
     let mnemonic = match opcode {
         0x0 => "and",
-        0x1 => "eor", 
+        0x1 => "eor",
         0x2 => "sub",
         0x3 => "rsb",
         0x4 => "add",
@@ -181,8 +189,16 @@ fn decode_data_processing(cursor: &mut Cursor, instr: u32, addr: u32) -> Option<
         _ => return None,
     };
 
-    let cond_suffix = if cond != 14 { CONDITIONS[cond as usize] } else { "" };
-    let s_suffix = if s == 1 && !matches!(opcode, 0x8..=0xb) { "s" } else { "" };
+    let cond_suffix = if cond != 14 {
+        CONDITIONS[cond as usize]
+    } else {
+        ""
+    };
+    let s_suffix = if s == 1 && !matches!(opcode, 0x8..=0xb) {
+        "s"
+    } else {
+        ""
+    };
     let full_mnemonic = format!("{}{}{}", mnemonic, cond_suffix, s_suffix);
 
     let rd_name = REGS[rd as usize];
@@ -210,7 +226,7 @@ fn decode_immediate(cursor: &mut Cursor, instr: u32, addr: u32) -> Option<Instru
     let mnemonic = match opcode {
         0x0 => "and",
         0x1 => "eor",
-        0x2 => "sub", 
+        0x2 => "sub",
         0x3 => "rsb",
         0x4 => "add",
         0x5 => "adc",
@@ -227,8 +243,16 @@ fn decode_immediate(cursor: &mut Cursor, instr: u32, addr: u32) -> Option<Instru
         _ => return None,
     };
 
-    let cond_suffix = if cond != 14 { CONDITIONS[cond as usize] } else { "" };
-    let s_suffix = if s == 1 && !matches!(opcode, 0x8..=0xb) { "s" } else { "" };
+    let cond_suffix = if cond != 14 {
+        CONDITIONS[cond as usize]
+    } else {
+        ""
+    };
+    let s_suffix = if s == 1 && !matches!(opcode, 0x8..=0xb) {
+        "s"
+    } else {
+        ""
+    };
     let full_mnemonic = format!("{}{}{}", mnemonic, cond_suffix, s_suffix);
 
     let rd_name = REGS[rd as usize];
@@ -256,7 +280,11 @@ fn decode_load_store(cursor: &mut Cursor, instr: u32, addr: u32) -> Option<Instr
 
     let base_mnemonic = if l == 1 { "ldr" } else { "str" };
     let b_suffix = if b == 1 { "b" } else { "" };
-    let cond_suffix = if cond != 14 { CONDITIONS[cond as usize] } else { "" };
+    let cond_suffix = if cond != 14 {
+        CONDITIONS[cond as usize]
+    } else {
+        ""
+    };
     let mnemonic = format!("{}{}{}", base_mnemonic, b_suffix, cond_suffix);
 
     let rd_name = REGS[rd as usize];
@@ -301,12 +329,16 @@ fn decode_load_store_multiple(cursor: &mut Cursor, instr: u32, addr: u32) -> Opt
     let base_mnemonic = if l == 1 { "ldm" } else { "stm" };
     let mode = match (p, u) {
         (0, 0) => "da",
-        (0, 1) => "ia", 
+        (0, 1) => "ia",
         (1, 0) => "db",
         (1, 1) => "ib",
         _ => "",
     };
-    let cond_suffix = if cond != 14 { CONDITIONS[cond as usize] } else { "" };
+    let cond_suffix = if cond != 14 {
+        CONDITIONS[cond as usize]
+    } else {
+        ""
+    };
     let mnemonic = format!("{}{}{}", base_mnemonic, mode, cond_suffix);
 
     let rn_name = REGS[rn as usize];
@@ -330,7 +362,11 @@ fn decode_branch(cursor: &mut Cursor, instr: u32, addr: u32) -> Option<Instructi
     let cond = (instr >> 28) & 0xf;
 
     let base_mnemonic = if l == 1 { "bl" } else { "b" };
-    let cond_suffix = if cond != 14 { CONDITIONS[cond as usize] } else { "" };
+    let cond_suffix = if cond != 14 {
+        CONDITIONS[cond as usize]
+    } else {
+        ""
+    };
     let mnemonic = format!("{}{}", base_mnemonic, cond_suffix);
 
     let sign_extended = if offset & 0x2000000 != 0 {
@@ -338,7 +374,7 @@ fn decode_branch(cursor: &mut Cursor, instr: u32, addr: u32) -> Option<Instructi
     } else {
         offset
     };
-    
+
     let target = addr.wrapping_add(8).wrapping_add(sign_extended);
     let target_str = format!("0x{:x}", target);
 
@@ -355,15 +391,15 @@ fn decode_operand2(instr: u32) -> String {
         let rm = instr & 0xf;
         let shift_type = (instr >> 5) & 0x3;
         let shift_amount = (instr >> 7) & 0x1f;
-        
+
         let rm_name = REGS[rm as usize];
-        
+
         if shift_amount == 0 {
             rm_name.to_string()
         } else {
             let shift_name = match shift_type {
                 0 => "lsl",
-                1 => "lsr", 
+                1 => "lsr",
                 2 => "asr",
                 3 => "ror",
                 _ => "",
@@ -398,7 +434,7 @@ fn extract_string_at(data: &[u8]) -> Option<(String, usize)> {
         }
     }
 
-    if end < 3 || printable_count as f32 / end as f32 < 0.8 {
+    if end < 3 || (printable_count as f32) / (end as f32) < 0.8 {
         return None;
     }
 
@@ -410,7 +446,9 @@ fn extract_string_at(data: &[u8]) -> Option<(String, usize)> {
 
 pub fn decode_with_vr(bytes: &[u8], addr: u32, vr: &mut VariableRecovery) -> Option<Instruction> {
     if let Some(mut instr) = decode(bytes, addr) {
-        instr.operands = instr.operands.into_iter()
+        instr.operands = instr
+            .operands
+            .into_iter()
             .map(|op| vr.process_operand(&op, addr))
             .collect();
         Some(instr)
